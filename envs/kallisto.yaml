@@ -1,0 +1,7 @@
+channels:
+  - bioconda
+  - merv
+  - defaults
+dependencies:
+  - kallisto=0.44
+  - scimulator=0.1.0dev
