@@ -5,7 +5,7 @@ configfile: "config.yaml"
 
 rule all:
     input:
-        expand("data/kallisto/Rac1.d{distance}.ctp{countsProximal}.ctd{countsDistal}.txw{txWidth}/abundance.tsv",
+        expand("data/kallisto/Rac1.d{distance}.ctp{countsProximal}.ctd{countsDistal}.txw{txWidth}/confusion.txt",
                distance=[50,100,150,200,250,300,350,400,450,500,550,600,650,700],
                countsProximal=[50,100], countsDistal=[50,100], txWidth=[350,400,450,500,550,600])
 
@@ -51,3 +51,13 @@ rule kallisto_quant:
         kallisto quant -i {input.kdx} -o {params.outDir} --single -l1 -s1 --fr-stranded --pseudobam --plaintext {input.fastq}
         """
 
+rule summarize_bam:
+    input:
+        bam="data/kallisto/{gene}.d{distance}.ctp{countsProximal}.ctd{countsDistal}.txw{txWidth}/pseudoalignments.bam"
+    output:
+        "data/kallisto/{gene}.d{distance}.ctp{countsProximal}.ctd{countsDistal}.txw{txWidth}/confusion.txt"
+    shell:
+        """
+        samtools view {input.bam} | cut -f1,3 | \
+        awk -F'[.\t]' '{{ print $1, $3 }}' | sort | uniq -c > {output}
+        """

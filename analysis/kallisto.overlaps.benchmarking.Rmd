@@ -1,0 +1,165 @@
+---
+title: "Kallisto Overlap Benchmarking"
+author: "Merv Fansler"
+date: "12/3/2018"
+output: html_document
+---
+
+# Read Mapping
+
+The experiment uses two hypothetical 3' UTRs based on the longest Rac1 transcript. Parameters sweeped over include the truncated transcript sizes (350-600 nt), distance between cleavage sites (50-700 nt), and read counts per UTR (50 or 100 reads).
+
+```{r, message=FALSE}
+library(readr)
+library(dplyr)
+library(tidyr)
+library(stringr)
+
+df.pseudo <- tibble()
+
+for (d in seq(50, 700, 50)) {
+  for (proxCounts in c(50, 100)) {
+    for (distCounts in c(50, 100)) {
+      for (txWidth in seq(350, 600, 50)) {
+        f <- sprintf("../data/kallisto/Rac1.d%d.ctp%d.ctd%d.txw%d/confusion.txt", 
+                     d, proxCounts, distCounts, txWidth)
+        df_i <- read_fwf(f, fwf_widths(c(7, 5, NA), c("counts", "origin", "result"))) %>%
+          mutate(distance=d, transcriptWidth=txWidth,
+                 proximalCounts=proxCounts, distalCounts=distCounts,
+                 origin=str_replace_all(origin, c('UTR0'='distal', 'UTR1'='proximal')),
+                 result=str_replace_all(result, c('UTR0'='distal', 'UTR1'='proximal')))
+        df.pseudo <- bind_rows(df.pseudo, df_i)
+      }
+    }
+  }
+}
+
+df.pseudo$origin <- factor(df.pseudo$origin, levels=c('proximal', 'distal'), ordered = TRUE)
+
+df.pseudo <- df.pseudo %>% 
+  complete(origin, result, distance, transcriptWidth, proximalCounts, 
+           distalCounts, fill=list(counts=0))
+```
+
+```{r}
+print(df.pseudo)
+```
+
+## Unmapped Reads
+
+Here we take mean percentage unmapped across each of the transcript count conditions ((50,50), (50,100), (100,50), (100,100)).  From this we hope to get a sense of a reasonable truncated transcript length to use for UTRome mapping.
+
+```{r, message=FALSE}
+library(ggplot2)
+
+df.pseudo %>% 
+  filter(result == '*') %>%
+  group_by(origin, transcriptWidth, distance) %>%
+  summarise(mean.unmapped.pct=100*mean(counts/ifelse(origin=='distal', distalCounts, proximalCounts))) %>%
+  ggplot(aes(x=transcriptWidth, y=distance)) +
+  geom_tile(aes(fill=mean.unmapped.pct)) + 
+  scale_fill_distiller(palette = "Spectral") + 
+  facet_grid(cols = vars(origin)) +
+  labs(title="Unmapped Reads", x="Transcript Width (nt)", y="Cleavage Site Distance (nt)") +
+  guides(fill=guide_legend(title="Unmapped\nReads (%)"))
+
+```
+
+In the plot of proximal reads, we see that percentage of unmapped reads is independent of the cleavage site distance between the proximal and distal 3' UTRs. In constrast, the distal reads depend on how far upstream the proximal 3' UTR.  The difference seen here implies the reads falling off the 5' end are getting mismapped to the proximal transcript.
+
+# Transcript Quantifications
+
+```{r}
+
+
+df.quant <- tibble()
+
+for (d in seq(50, 700, 50)) {
+  for (proxCounts in c(50, 100)) {
+    for (distCounts in c(50, 100)) {
+      for (txWidth in seq(350, 600, 50)) {
+        f <- sprintf("../data/kallisto/Rac1.d%d.ctp%d.ctd%d.txw%d/abundance.tsv", 
+                     d, proxCounts, distCounts, txWidth)
+        df_i <- read_tsv(f, col_types = 'c__d_', col_names = c("utr", "counts"), skip=1) %>%
+          mutate(distance=d, transcriptWidth=txWidth,
+                 proximalCounts=proxCounts, distalCounts=distCounts,
+                 utr=str_replace_all(utr, c('UTR0'='distal', 'UTR1'='proximal'))) %>%
+          mutate(counts.true=ifelse(utr == 'distal', distalCounts, proximalCounts)) %>%
+          mutate(error.abs = counts - counts.true, error.rel = 100 * (counts - counts.true) / counts.true)
+        df.quant <- bind_rows(df.quant, df_i)
+      }
+    }
+  }
+}
+
+df.quant$utr <- factor(df.quant$utr, levels=c('proximal', 'distal'), ordered = TRUE)
+
+print(df.quant)
+```
+
+
+```{r}
+
+df.quant %>% 
+  filter(utr == 'proximal') %>%
+  ggplot(aes(x=transcriptWidth, y=distance)) +
+  geom_tile(aes(fill=error.rel)) + 
+  scale_fill_gradient2(low = "blue", high = "red", mid = "white", 
+   midpoint = 0, name="Relative\nError (%)") + 
+  facet_grid(rows=vars(proximalCounts), cols=vars(distalCounts), labeller = label_both) +
+  labs(title="Proximal Transcript Quantification Error", 
+       x="Transcript Width (nt)", y="Cleavage Site Distance (nt)")
+
+df.quant %>% 
+  filter(utr == 'distal') %>%
+  ggplot(aes(x=transcriptWidth, y=distance), height=12, width=8) +
+  geom_tile(aes(fill=error.rel)) + 
+  scale_fill_gradient2(low = "blue", high = "red", mid = "white", 
+   midpoint = 0, name="Relative\nError (%)") + 
+  facet_grid(rows=vars(proximalCounts), cols=vars(distalCounts), labeller = label_both) +
+  labs(title="Distal Transcript Quantification Error", 
+       x="Transcript Width (nt)", y="Cleavage Site Distance (nt)")
+
+```
+
+
+When cleavage sites are close together (< 200 nt), for transcripts of size < 500 nt we observe a tendency to overestimate the proximal transcripts and underestimate the distal transcripts.  In the other direction, longer transcript lengths appear to switch this pattern, with proximal and distal transcripts being under- and overestimated, respectively.  The transition around 500 nt suggests this length as a balance point between these two tendencies.
+
+It should be remembered that these results depend on the gamma distribution used to generate the read start locations upstream from the cleavage site.  Here we specifically used the mean gamma distribution obtained from fitting distributions for 85 single-peak, constitutively-expressed genes across all libraries in the Tabula Muris dataset.
+
+
+```{r}
+
+df.quant %>% 
+  filter(transcriptWidth == 450) %>%
+  ggplot(aes(x=distance, y=error.rel, color=interaction(proximalCounts, distalCounts))) +
+  geom_line() + 
+  facet_grid(rows=vars(utr)) +
+  labs(title="Transcript Quantification Error (450 nt Transcripts)", 
+       x="Cleavage Site Distance (nt)", y="Relative Quantification Error (%)") +
+  guides(color=guide_legend(title="True Counts\n(prox.dist)"))
+
+df.quant %>% 
+  filter(transcriptWidth == 500) %>%
+  ggplot(aes(x=distance, y=error.rel, color=interaction(proximalCounts, distalCounts))) +
+  geom_line() + 
+  facet_grid(rows=vars(utr)) +
+  labs(title="Transcript Quantification Error (500 nt Transcripts)", 
+       x="Cleavage Site Distance (nt)", y="Relative Quantification Error (%)") +
+  guides(color=guide_legend(title="True Counts\n(prox.dist)"))
+
+df.quant %>% 
+  filter(transcriptWidth == 550) %>%
+  ggplot(aes(x=distance, y=error.rel, color=interaction(proximalCounts, distalCounts))) +
+  geom_line() + 
+  facet_grid(rows=vars(utr)) +
+  labs(title="Transcript Quantification Error (550 nt Transcripts)", 
+       x="Cleavage Site Distance (nt)", y="Relative Quantification Error (%)") +
+  guides(color=guide_legend(title="True Counts\n(prox.dist)"))
+
+
+```
+
+
+
+
