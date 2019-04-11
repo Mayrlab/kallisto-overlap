@@ -1,19 +1,19 @@
 ---
 title: "Kallisto Overlap Benchmarking"
 author: "Merv Fansler"
-date: "12/3/2018"
+date: "11 April 2019"
 output: html_document
 ---
 
 # Read Mapping
 
-The experiment uses two hypothetical 3' UTRs based on the longest Rac1 transcript. Parameters sweeped over include the truncated transcript sizes (350-600 nt), distance between cleavage sites (50-700 nt), and read counts per UTR (50 or 100 reads).
+The experiment uses two hypothetical 3' UTRs based on the longest Rac1 transcript. Parameters sweeped over include the truncated transcript sizes (350-600 nt), distance between cleavage sites (50-700 nt), and read counts per UTR (50 or 100 reads). Ten replicates were perform for each setting.
+
+```{r, message=FALSE, warning=FALSE}
+library(tidyverse)
+```
 
 ```{r, message=FALSE}
-library(readr)
-library(dplyr)
-library(tidyr)
-library(stringr)
 
 df.pseudo <- tibble()
 
@@ -21,14 +21,16 @@ for (d in seq(50, 700, 50)) {
   for (proxCounts in c(50, 100)) {
     for (distCounts in c(50, 100)) {
       for (txWidth in seq(350, 600, 50)) {
-        f <- sprintf("../data/kallisto/Rac1.d%d.ctp%d.ctd%d.txw%d/confusion.txt", 
-                     d, proxCounts, distCounts, txWidth)
-        df_i <- read_fwf(f, fwf_widths(c(7, 5, NA), c("counts", "origin", "result"))) %>%
-          mutate(distance=d, transcriptWidth=txWidth,
-                 proximalCounts=proxCounts, distalCounts=distCounts,
-                 origin=str_replace_all(origin, c('UTR0'='distal', 'UTR1'='proximal')),
-                 result=str_replace_all(result, c('UTR0'='distal', 'UTR1'='proximal')))
-        df.pseudo <- bind_rows(df.pseudo, df_i)
+        for (i in seq(10) - 1) {
+          f <- sprintf("../data/kallisto/txw%d/d%d/ctp%d.ctd%d/Rac1.r%d/confusion.txt", 
+                       txWidth, d, proxCounts, distCounts, i)
+          df_i <- read_fwf(f, fwf_widths(c(5, 4, NA), c("counts", "origin", "result"))) %>%
+            mutate(distance=d, transcriptWidth=txWidth, replicate=i,
+                   proximalCounts=proxCounts, distalCounts=distCounts,
+                   origin=str_replace_all(origin, c('UTR0'='distal', 'UTR1'='proximal')),
+                   result=str_replace_all(result, c('UTR0'='distal', 'UTR1'='proximal')))
+          df.pseudo <- bind_rows(df.pseudo, df_i)
+        }
       }
     }
   }
@@ -38,7 +40,7 @@ df.pseudo$origin <- factor(df.pseudo$origin, levels=c('proximal', 'distal'), ord
 
 df.pseudo <- df.pseudo %>% 
   complete(origin, result, distance, transcriptWidth, proximalCounts, 
-           distalCounts, fill=list(counts=0))
+           distalCounts, replicate, fill=list(counts=0))
 ```
 
 ```{r}
@@ -50,8 +52,6 @@ print(df.pseudo)
 Here we take mean percentage unmapped across each of the transcript count conditions ((50,50), (50,100), (100,50), (100,100)).  From this we hope to get a sense of a reasonable truncated transcript length to use for UTRome mapping.
 
 ```{r, message=FALSE}
-library(ggplot2)
-
 df.pseudo %>% 
   filter(result == '*') %>%
   group_by(origin, transcriptWidth, distance) %>%
@@ -70,23 +70,23 @@ In the plot of proximal reads, we see that percentage of unmapped reads is indep
 # Transcript Quantifications
 
 ```{r}
-
-
 df.quant <- tibble()
 
 for (d in seq(50, 700, 50)) {
   for (proxCounts in c(50, 100)) {
     for (distCounts in c(50, 100)) {
       for (txWidth in seq(350, 600, 50)) {
-        f <- sprintf("../data/kallisto/Rac1.d%d.ctp%d.ctd%d.txw%d/abundance.tsv", 
-                     d, proxCounts, distCounts, txWidth)
-        df_i <- read_tsv(f, col_types = 'c__d_', col_names = c("utr", "counts"), skip=1) %>%
-          mutate(distance=d, transcriptWidth=txWidth,
-                 proximalCounts=proxCounts, distalCounts=distCounts,
-                 utr=str_replace_all(utr, c('UTR0'='distal', 'UTR1'='proximal'))) %>%
-          mutate(counts.true=ifelse(utr == 'distal', distalCounts, proximalCounts)) %>%
-          mutate(error.abs = counts - counts.true, error.rel = 100 * (counts - counts.true) / counts.true)
-        df.quant <- bind_rows(df.quant, df_i)
+        for (i in seq(10) - 1) {
+          f <- sprintf("../data/kallisto/txw%d/d%d/ctp%d.ctd%d/Rac1.r%d/abundance.tsv", 
+                       txWidth, d, proxCounts, distCounts, i)
+          df_i <- read_tsv(f, col_types = 'c__d_', col_names = c("utr", "counts"), skip=1) %>%
+            mutate(distance=d, transcriptWidth=txWidth, replicate=i,
+                   proximalCounts=proxCounts, distalCounts=distCounts,
+                   utr=str_replace_all(utr, c('UTR0'='distal', 'UTR1'='proximal'))) %>%
+            mutate(counts.true=ifelse(utr == 'distal', distalCounts, proximalCounts)) %>%
+            mutate(error.abs = counts - counts.true, error.rel = 100 * (counts - counts.true) / counts.true)
+          df.quant <- bind_rows(df.quant, df_i)
+        }
       }
     }
   }
@@ -102,20 +102,52 @@ print(df.quant)
 
 df.quant %>% 
   filter(utr == 'proximal') %>%
+  group_by(transcriptWidth, distance, proximalCounts, distalCounts) %>%
+  summarise(mean.error.rel=mean(error.rel)) %>%
+  ungroup() %>%
   ggplot(aes(x=transcriptWidth, y=distance)) +
-  geom_tile(aes(fill=error.rel)) + 
+  geom_tile(aes(fill=mean.error.rel)) + 
   scale_fill_gradient2(low = "blue", high = "red", mid = "white", 
-   midpoint = 0, name="Relative\nError (%)") + 
+   midpoint = 0, name="Mean\nRelative\nError (%)") + 
+  facet_grid(rows=vars(proximalCounts), cols=vars(distalCounts), labeller = label_both) +
+  labs(title="Proximal Transcript Quantification Error", 
+       x="Transcript Width (nt)", y="Cleavage Site Distance (nt)")
+
+df.quant %>% 
+  filter(utr == 'proximal') %>%
+  group_by(transcriptWidth, distance, proximalCounts, distalCounts) %>%
+  summarise(median.error.rel=median(error.rel)) %>%
+  ungroup() %>%
+  ggplot(aes(x=transcriptWidth, y=distance)) +
+  geom_tile(aes(fill=median.error.rel)) + 
+  scale_fill_gradient2(low = "blue", high = "red", mid = "white", 
+   midpoint = 0, name="Median\nRelative\nError (%)") + 
   facet_grid(rows=vars(proximalCounts), cols=vars(distalCounts), labeller = label_both) +
   labs(title="Proximal Transcript Quantification Error", 
        x="Transcript Width (nt)", y="Cleavage Site Distance (nt)")
 
 df.quant %>% 
   filter(utr == 'distal') %>%
+  group_by(transcriptWidth, distance, proximalCounts, distalCounts) %>%
+  summarise(mean.error.rel=mean(error.rel)) %>%
+  ungroup() %>%
   ggplot(aes(x=transcriptWidth, y=distance), height=12, width=8) +
-  geom_tile(aes(fill=error.rel)) + 
+  geom_tile(aes(fill=mean.error.rel)) + 
   scale_fill_gradient2(low = "blue", high = "red", mid = "white", 
-   midpoint = 0, name="Relative\nError (%)") + 
+   midpoint = 0, name="Mean\nRelative\nError (%)") + 
+  facet_grid(rows=vars(proximalCounts), cols=vars(distalCounts), labeller = label_both) +
+  labs(title="Distal Transcript Quantification Error", 
+       x="Transcript Width (nt)", y="Cleavage Site Distance (nt)")
+
+df.quant %>% 
+  filter(utr == 'distal') %>%
+  group_by(transcriptWidth, distance, proximalCounts, distalCounts) %>%
+  summarise(median.error.rel=median(error.rel)) %>%
+  ungroup() %>%
+  ggplot(aes(x=transcriptWidth, y=distance), height=12, width=8) +
+  geom_tile(aes(fill=median.error.rel)) + 
+  scale_fill_gradient2(low = "blue", high = "red", mid = "white", 
+   midpoint = 0, name="Median\nRelative\nError (%)") + 
   facet_grid(rows=vars(proximalCounts), cols=vars(distalCounts), labeller = label_both) +
   labs(title="Distal Transcript Quantification Error", 
        x="Transcript Width (nt)", y="Cleavage Site Distance (nt)")
@@ -133,29 +165,41 @@ It should be remembered that these results depend on the gamma distribution used
 df.quant %>% 
   filter(transcriptWidth == 450) %>%
   ggplot(aes(x=distance, y=error.rel, color=interaction(proximalCounts, distalCounts))) +
-  geom_line() + 
+  geom_hline(yintercept=0, linetype='dashed', alpha=0.8) +
+  stat_summary(geom='line', fun.y=mean) +
+  stat_summary(aes(fill=interaction(proximalCounts, distalCounts)), geom='ribbon',
+               fun.data=mean_sdl, linetype=0, alpha=0.2) +
   facet_grid(rows=vars(utr)) +
   labs(title="Transcript Quantification Error (450 nt Transcripts)", 
        x="Cleavage Site Distance (nt)", y="Relative Quantification Error (%)") +
-  guides(color=guide_legend(title="True Counts\n(prox.dist)"))
+  guides(color=guide_legend(title="True Counts\n(prox.dist)"), 
+         fill=guide_legend(title="True Counts\n(prox.dist)"))
 
 df.quant %>% 
   filter(transcriptWidth == 500) %>%
   ggplot(aes(x=distance, y=error.rel, color=interaction(proximalCounts, distalCounts))) +
-  geom_line() + 
+  geom_hline(yintercept=0, linetype='dashed', alpha=0.8) +
+  stat_summary(geom='line', fun.y=mean) +
+  stat_summary(aes(fill=interaction(proximalCounts, distalCounts)), geom='ribbon',
+               fun.data=mean_sdl, linetype=0, alpha=0.2) +
   facet_grid(rows=vars(utr)) +
   labs(title="Transcript Quantification Error (500 nt Transcripts)", 
        x="Cleavage Site Distance (nt)", y="Relative Quantification Error (%)") +
-  guides(color=guide_legend(title="True Counts\n(prox.dist)"))
+  guides(color=guide_legend(title="True Counts\n(prox.dist)"), 
+         fill=guide_legend(title="True Counts\n(prox.dist)"))
 
 df.quant %>% 
   filter(transcriptWidth == 550) %>%
   ggplot(aes(x=distance, y=error.rel, color=interaction(proximalCounts, distalCounts))) +
-  geom_line() + 
+  geom_hline(yintercept=0, linetype='dashed', alpha=0.8) +
+  stat_summary(geom='line', fun.y=mean) +
+  stat_summary(aes(fill=interaction(proximalCounts, distalCounts)), geom='ribbon',
+               fun.data=mean_sdl, linetype=0, alpha=0.2) +
   facet_grid(rows=vars(utr)) +
   labs(title="Transcript Quantification Error (550 nt Transcripts)", 
        x="Cleavage Site Distance (nt)", y="Relative Quantification Error (%)") +
-  guides(color=guide_legend(title="True Counts\n(prox.dist)"))
+  guides(color=guide_legend(title="True Counts\n(prox.dist)"), 
+         fill=guide_legend(title="True Counts\n(prox.dist)"))
 
 
 ```

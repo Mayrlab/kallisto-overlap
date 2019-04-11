@@ -5,14 +5,15 @@ configfile: "config.yaml"
 
 rule all:
     input:
-        expand("data/kallisto/Rac1.d{distance}.ctp{countsProximal}.ctd{countsDistal}.txw{txWidth}/confusion.txt",
+        expand("data/kallisto/txw{txWidth}/d{distance}/ctp{countsProximal}.ctd{countsDistal}/Rac1.r{replicate}/confusion.txt",
+               replicate=list(range(10)),
                distance=[50,100,150,200,250,300,350,400,450,500,550,600,650,700],
                countsProximal=[50,100], countsDistal=[50,100], txWidth=[350,400,450,500,550,600])
 
 rule simulate_two_utr:
     output:
-        fastq="data/fastq/{gene}.d{distance}.ctp{countsProximal}.ctd{countsDistal}.txw{txWidth}.fq",
-        fasta="data/fasta/{gene}.d{distance}.ctp{countsProximal}.ctd{countsDistal}.txw{txWidth}.fa"
+        fastq="data/fastq/txw{txWidth}/d{distance}/ctp{countsProximal}.ctd{countsDistal}/{gene}.r{replicate}.fq",
+        fasta="data/fasta/txw{txWidth}/d{distance}/ctp{countsProximal}.ctd{countsDistal}/{gene}.r{replicate}.fa"
     params:
         seq=lambda wcs: None if wcs.gene == "random" else config['seq'][wcs.gene],
         mu=config['peaks']['mu'],
@@ -25,9 +26,9 @@ rule simulate_two_utr:
 
 rule kallisto_index:
     input:
-        fasta="data/fasta/{gene}.d{distance}.ctp{countsProximal}.ctd{countsDistal}.txw{txWidth}.fa"
+        fasta="data/fasta/txw{txWidth}/d{distance}/ctp{countsProximal}.ctd{countsDistal}/{gene}.r{replicate}.fa"
     output:
-        kdx="data/kdx/{gene}.d{distance}.ctp{countsProximal}.ctd{countsDistal}.txw{txWidth}.kdx"
+        kdx="data/kdx/txw{txWidth}/d{distance}/ctp{countsProximal}.ctd{countsDistal}/{gene}.r{replicate}.kdx"
     conda:
         "envs/kallisto.yaml"
     shell:
@@ -37,13 +38,13 @@ rule kallisto_index:
 
 rule kallisto_quant:
     input:
-        kdx="data/kdx/{gene}.d{distance}.ctp{countsProximal}.ctd{countsDistal}.txw{txWidth}.kdx",
-        fastq="data/fastq/{gene}.d{distance}.ctp{countsProximal}.ctd{countsDistal}.txw{txWidth}.fq"
+        kdx="data/kdx/txw{txWidth}/d{distance}/ctp{countsProximal}.ctd{countsDistal}/{gene}.r{replicate}.kdx",
+        fastq="data/fastq/txw{txWidth}/d{distance}/ctp{countsProximal}.ctd{countsDistal}/{gene}.r{replicate}.fq"
     output:
-        tsv="data/kallisto/{gene}.d{distance}.ctp{countsProximal}.ctd{countsDistal}.txw{txWidth}/abundance.tsv",
-        bam="data/kallisto/{gene}.d{distance}.ctp{countsProximal}.ctd{countsDistal}.txw{txWidth}/pseudoalignments.bam"
+        tsv="data/kallisto/txw{txWidth}/d{distance}/ctp{countsProximal}.ctd{countsDistal}/{gene}.r{replicate}/abundance.tsv",
+        bam="data/kallisto/txw{txWidth}/d{distance}/ctp{countsProximal}.ctd{countsDistal}/{gene}.r{replicate}/pseudoalignments.bam"
     params:
-        outDir="data/kallisto/{gene}.d{distance}.ctp{countsProximal}.ctd{countsDistal}.txw{txWidth}"
+        outDir="data/kallisto/txw{txWidth}/d{distance}/ctp{countsProximal}.ctd{countsDistal}/{gene}.r{replicate}"
     conda:
         "envs/kallisto.yaml"
     shell:
@@ -53,9 +54,11 @@ rule kallisto_quant:
 
 rule summarize_bam:
     input:
-        bam="data/kallisto/{gene}.d{distance}.ctp{countsProximal}.ctd{countsDistal}.txw{txWidth}/pseudoalignments.bam"
+        bam="data/kallisto/txw{txWidth}/d{distance}/ctp{countsProximal}.ctd{countsDistal}/{gene}.r{replicate}/pseudoalignments.bam"
     output:
-        "data/kallisto/{gene}.d{distance}.ctp{countsProximal}.ctd{countsDistal}.txw{txWidth}/confusion.txt"
+        "data/kallisto/txw{txWidth}/d{distance}/ctp{countsProximal}.ctd{countsDistal}/{gene}.r{replicate}/confusion.txt"
+    conda:
+        "envs/samtools.yaml"
     shell:
         """
         samtools view {input.bam} | cut -f1,3 | \
